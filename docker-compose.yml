@@ -1,0 +1,61 @@
+version: "3.9"
+
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+
+  backend:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    environment:
+      APP_NAME: SafeHer API
+      APP_ENV: docker
+      SECRET_KEY: change-me
+      ACCESS_TOKEN_EXPIRE_MINUTES: 1440
+      MONGODB_URL: mongodb://mongo:27017
+      MONGODB_DB: safeher
+      CLIENT_ORIGINS: http://localhost:5173,http://localhost:8081
+      GOOGLE_MAPS_BASE_URL: https://maps.google.com/?q=
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
+      TWILIO_PHONE_NUMBER: ${TWILIO_PHONE_NUMBER:-}
+    depends_on:
+      - mongo
+    ports:
+      - "8000:8000"
+
+  seed:
+    build:
+      context: ./backend
+    environment:
+      APP_NAME: SafeHer API
+      APP_ENV: docker
+      SECRET_KEY: change-me
+      ACCESS_TOKEN_EXPIRE_MINUTES: 1440
+      MONGODB_URL: mongodb://mongo:27017
+      MONGODB_DB: safeher
+    depends_on:
+      - mongo
+    command: ["python", "scripts/seed_demo.py"]
+
+  admin:
+    build:
+      context: ./admin
+    restart: unless-stopped
+    environment:
+      VITE_API_BASE_URL: http://localhost:8000/api
+      VITE_WS_URL: ws://localhost:8000/ws/alerts
+      FIREBASE_CREDENTIALS_PATH: ${FIREBASE_CREDENTIALS_PATH:-}
+    depends_on:
+      - backend
+    ports:
+      - "5173:5173"
+
+volumes:
+  mongo_data:

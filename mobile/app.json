@@ -1,0 +1,32 @@
+{
+  "expo": {
+    "name": "SafeHer",
+    "slug": "safeher",
+    "version": "1.0.0",
+    "updates": {
+      "enabled": false,
+      "checkAutomatically": "NEVER",
+      "fallbackToCacheTimeout": 0
+    },
+    "orientation": "portrait",
+    "platforms": [
+      "android",
+      "ios"
+    ],
+    "plugins": [
+      "expo-secure-store",
+      "expo-notifications",
+      "expo-asset"
+    ],
+    "android": {
+      "package": "com.safeher.app",
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "POST_NOTIFICATIONS",
+        "FOREGROUND_SERVICE"
+      ]
+    }
+  }
+}

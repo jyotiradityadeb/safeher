@@ -1,0 +1,44 @@
+{
+  "type": "nearest_centroid",
+  "features": [
+    "duration_ms",
+    "average_speed",
+    "max_speed",
+    "total_distance",
+    "direction_changes"
+  ],
+  "labels": [
+    "distress_swipe",
+    "normal_interaction"
+  ],
+  "mean": {
+    "duration_ms": 1541.203333,
+    "average_speed": 0.336012,
+    "max_speed": 0.668664,
+    "total_distance": 208.309845,
+    "direction_changes": 2.156667
+  },
+  "std": {
+    "duration_ms": 672.180838,
+    "average_speed": 0.248138,
+    "max_speed": 0.474661,
+    "total_distance": 95.108511,
+    "direction_changes": 2.06065
+  },
+  "centroids": {
+    "distress_swipe": [
+      -0.983074,
+      1.021244,
+      1.01584,
+      0.983007,
+      0.904939
+    ],
+    "normal_interaction": [
+      0.86019,
+      -0.893588,
+      -0.88886,
+      -0.860131,
+      -0.791822
+    ]
+  }
+}

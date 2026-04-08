@@ -1,0 +1,41 @@
+# OS / Editor
+.DS_Store
+Thumbs.db
+.vscode/
+
+# Logs
+*.log
+*.out
+*.err
+.codex-logs/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Node / React / Expo
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+.expo/
+dist/
+build/
+
+# Mobile native build artifacts
+mobile/android/.gradle/
+mobile/android/app/build/
+mobile/ios/build/
+
+# Environment files
+.env
+*.env.local
+
+# ML artifacts
+*.tflite
+*.h5
+*.onnx
