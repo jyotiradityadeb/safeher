@@ -3,7 +3,12 @@ from datetime import datetime, timezone
 from fastapi import HTTPException, status
 
 from app.schemas.auth import LoginRequest, SignupRequest, TokenResponse
-from app.utils.security import create_access_token, get_password_hash, verify_password
+from app.utils.security import (
+    create_access_token,
+    create_refresh_token,
+    get_password_hash,
+    verify_password,
+)
 
 
 class AuthService:
@@ -26,11 +31,14 @@ class AuthService:
             "updated_at": now,
         }
         result = await self.users.insert_one(user)
-        access_token = create_access_token(str(result.inserted_id))
+        user_id = str(result.inserted_id)
+        access_token = create_access_token(user_id)
+        refresh_token = create_refresh_token(user_id)
         return TokenResponse(
             access_token=access_token,
+            refresh_token=refresh_token,
             user={
-                "id": str(result.inserted_id),
+                "id": user_id,
                 "full_name": payload.full_name,
                 "email": payload.email,
                 "phone_number": payload.phone_number,
@@ -43,11 +51,14 @@ class AuthService:
         if not user or not verify_password(payload.password, user["password_hash"]):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials.")
 
-        access_token = create_access_token(str(user["_id"]))
+        user_id = str(user["_id"])
+        access_token = create_access_token(user_id)
+        refresh_token = create_refresh_token(user_id)
         return TokenResponse(
             access_token=access_token,
+            refresh_token=refresh_token,
             user={
-                "id": str(user["_id"]),
+                "id": user_id,
                 "full_name": user["full_name"],
                 "email": user["email"],
                 "phone_number": user["phone_number"],

@@ -1,6 +1,7 @@
 import * as SecureStore from "expo-secure-store";
 
 import { api } from "../api/client";
+import { getBestEffortLocation } from "./locationFallback";
 
 type SmartCheckIn = {
   id: string;
@@ -23,12 +24,6 @@ const fallbackFeatures = {
   max_speed: 1.36,
   total_distance: 289,
   direction_changes: 5,
-};
-
-const fallbackLocation = {
-  latitude: 28.6139,
-  longitude: 77.209,
-  accuracy: 30,
 };
 
 async function getStoredPendingCheckIn(): Promise<SmartCheckIn | null> {
@@ -83,7 +78,12 @@ export async function processPendingCheckInEscalation(options?: {
 
   try {
     const headers = await authHeaders();
-    const loc = options?.location || fallbackLocation;
+    const computed = await getBestEffortLocation();
+    const loc = options?.location || {
+      latitude: computed.latitude,
+      longitude: computed.longitude,
+      accuracy: computed.accuracy,
+    };
     await api.post(
       "/alerts",
       {
@@ -98,6 +98,7 @@ export async function processPendingCheckInEscalation(options?: {
         metadata: {
           source: "background_smart_checkin_monitor",
           check_in_id: checkIn.id,
+          location_source: computed.source,
         },
         triggered_at: new Date().toISOString(),
       },

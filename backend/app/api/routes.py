@@ -1,13 +1,15 @@
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from bson import ObjectId
+from jose import JWTError, jwt
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File
 
 from app.api.deps import get_current_admin, get_current_user
 from app.core.config import get_settings
 from app.db.database import get_database
 from app.schemas.alert import AlertCreate
-from app.schemas.auth import LoginRequest, SignupRequest
+from app.schemas.auth import LoginRequest, SignupRequest, RefreshRequest, TokenResponse
 from app.schemas.contact import EmergencyContactCreate
 from app.schemas.demo import DemoAlertRequest
 from app.schemas.device import DeviceTokenCreate
@@ -18,6 +20,7 @@ from app.schemas.safety import (
     CheckInRequestCreate,
     LiveRoomAckCreate,
     LiveRoomNoteCreate,
+    PublicLiveRoomNoteCreate,
 )
 from app.services.alert_service import AlertService
 from app.services.auth_service import AuthService
@@ -26,6 +29,8 @@ from app.services.device_service import DeviceService
 from app.services.federated_service import FederatedService
 from app.services.location_service import LocationService
 from app.services.safety_service import SafetyService
+from app.utils.rate_limit import client_key, rate_limiter
+from app.utils.security import ALGORITHM, create_access_token, create_refresh_token
 
 router = APIRouter()
 settings = get_settings()
@@ -51,13 +56,54 @@ async def system_status(user=Depends(get_current_user)):
 
 
 @router.post("/auth/signup")
-async def signup(payload: SignupRequest, db=Depends(get_database)):
+async def signup(payload: SignupRequest, request: Request, db=Depends(get_database)):
+    rate_limiter.check(
+        client_key(request, "auth:signup"),
+        max_attempts=settings.auth_login_max_attempts,
+        window_seconds=settings.auth_login_window_seconds,
+    )
     return await AuthService(db).signup(payload)
 
 
 @router.post("/auth/login")
-async def login(payload: LoginRequest, db=Depends(get_database)):
+async def login(payload: LoginRequest, request: Request, db=Depends(get_database)):
+    rate_limiter.check(
+        client_key(request, "auth:login"),
+        max_attempts=settings.auth_login_max_attempts,
+        window_seconds=settings.auth_login_window_seconds,
+    )
     return await AuthService(db).login(payload)
+
+
+@router.post("/auth/refresh", response_model=TokenResponse)
+async def refresh_token(payload: RefreshRequest, db=Depends(get_database)):
+    try:
+        decoded = jwt.decode(payload.refresh_token, settings.secret_key, algorithms=[ALGORITHM])
+        if decoded.get("token_type") != "refresh":
+            raise HTTPException(status_code=401, detail="Invalid refresh token.")
+        user_id = decoded.get("sub")
+    except JWTError as error:
+        raise HTTPException(status_code=401, detail="Invalid refresh token.") from error
+
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid refresh token.")
+    if not ObjectId.is_valid(user_id):
+        raise HTTPException(status_code=401, detail="Invalid refresh token.")
+    user = await db["users"].find_one({"_id": ObjectId(user_id)})
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found.")
+
+    return TokenResponse(
+        access_token=create_access_token(str(user["_id"])),
+        refresh_token=create_refresh_token(str(user["_id"])),
+        user={
+            "id": str(user["_id"]),
+            "full_name": user["full_name"],
+            "email": user["email"],
+            "phone_number": user["phone_number"],
+            "is_admin": user.get("is_admin", False),
+        },
+    )
 
 
 @router.get("/me")
@@ -108,13 +154,49 @@ async def create_alert(
     user=Depends(get_current_user),
     db=Depends(get_database),
 ):
+    rate_limiter.check(
+        client_key(request, "alerts:create"),
+        max_attempts=settings.alerts_create_max_attempts,
+        window_seconds=settings.alerts_create_window_seconds,
+    )
     request_base_url = str(request.base_url).rstrip("/")
     hostname = (urlparse(request_base_url).hostname or "").lower()
-    if hostname in {"127.0.0.1", "localhost", "::1"}:
+    # For demo tunnels such as *.loca.lt, force the configured public room URL.
+    # This avoids anti-abuse interstitial pages when contacts open shared live-room links.
+    if hostname in {"127.0.0.1", "localhost", "::1"} or hostname.endswith(".loca.lt"):
         public_base_url = settings.public_room_base_url.rstrip("/")
     else:
         public_base_url = request_base_url
     return await AlertService(db).create_alert(user["id"], payload, public_base_url=public_base_url)
+
+
+@router.patch("/alerts/{alert_id}/resolve")
+async def resolve_alert(alert_id: str, user=Depends(get_current_user), db=Depends(get_database)):
+    try:
+        return await AlertService(db).mark_alert_status(user["id"], alert_id, "resolved")
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@router.patch("/alerts/{alert_id}/cancel")
+async def cancel_alert(alert_id: str, user=Depends(get_current_user), db=Depends(get_database)):
+    try:
+        return await AlertService(db).mark_alert_status(user["id"], alert_id, "cancelled")
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@router.post("/alerts/{alert_id}/evidence-audio")
+async def upload_alert_audio(
+    alert_id: str,
+    audio_file: UploadFile = File(...),
+    user=Depends(get_current_user),
+    db=Depends(get_database),
+):
+    try:
+        return await AlertService(db).attach_audio_evidence(user["id"], alert_id, audio_file)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
 
 
 @router.get("/alerts/history")
@@ -157,6 +239,20 @@ async def acknowledge_public_live_room(
 ):
     try:
         return await SafetyService(db).acknowledge_public_live_room(access_token, payload.contact_name)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@router.post("/public/live-room/{access_token}/note")
+async def add_public_live_room_note(
+    access_token: str,
+    payload: PublicLiveRoomNoteCreate,
+    db=Depends(get_database),
+):
+    try:
+        return await SafetyService(db).add_public_live_room_note(
+            access_token, payload.contact_name, payload.message
+        )
     except ValueError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
 
@@ -211,8 +307,21 @@ async def get_admin_summary(user=Depends(get_current_admin), db=Depends(get_data
 
 
 @router.post("/federated/updates")
-async def submit_model_update(payload: ModelUpdateCreate, db=Depends(get_database)):
-    return await FederatedService(db).submit_update(payload)
+async def submit_model_update(
+    payload: ModelUpdateCreate,
+    request: Request,
+    user=Depends(get_current_user),
+    db=Depends(get_database),
+):
+    rate_limiter.check(
+        client_key(request, "federated:update"),
+        max_attempts=settings.federated_update_max_attempts,
+        window_seconds=settings.federated_update_window_seconds,
+    )
+    try:
+        return await FederatedService(db).submit_update(payload, user["id"])
+    except ValueError as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
 
 
 @router.post("/federated/aggregate/{round_id}")

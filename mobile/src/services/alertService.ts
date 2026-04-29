@@ -1,50 +1,11 @@
-import * as Location from "expo-location";
 import { Linking, Platform } from "react-native";
 
 import { api } from "../api/client";
+import { getBestEffortLocation } from "./locationFallback";
 import { getErrorMessage } from "../utils/errorMessage";
 import { GestureFeatures } from "../utils/gesture";
 
-const prototypeLocation = {
-  latitude: 28.6139,
-  longitude: 77.209,
-  accuracy: 25,
-};
-const ENABLE_SMS_DRAFT_OPEN = true;
-
-async function getCurrentLocationFast(): Promise<typeof prototypeLocation> {
-  try {
-    const permission = await Location.requestForegroundPermissionsAsync();
-    if (!permission.granted) {
-      return prototypeLocation;
-    }
-
-    const lastKnown = await Location.getLastKnownPositionAsync();
-    const locationPromise = Location.getCurrentPositionAsync({
-      accuracy: Location.Accuracy.Highest,
-      mayShowUserSettingsDialog: true,
-    });
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      const timer = setTimeout(() => reject(new Error("Location timeout")), 8000);
-      // ensure timer is cleared if getCurrentPosition resolves
-      locationPromise.finally(() => clearTimeout(timer));
-    });
-
-    const currentPosition = await Promise.race([locationPromise, timeoutPromise]).catch(() => null);
-    const best = currentPosition || lastKnown;
-    if (best) {
-      return {
-        latitude: best.coords.latitude,
-        longitude: best.coords.longitude,
-        accuracy: best.coords.accuracy ?? 25,
-      };
-    }
-
-    return prototypeLocation;
-  } catch {
-    return prototypeLocation;
-  }
-}
+const ENABLE_SMS_DRAFT_OPEN = process.env.EXPO_PUBLIC_OPEN_SMS_DRAFT !== "false";
 
 function buildMapLink(latitude: number, longitude: number) {
   return `https://maps.google.com/?q=${latitude},${longitude}`;
@@ -106,13 +67,22 @@ async function openSmsDraft(recipients: string[], body: string) {
 }
 
 export async function createEmergencyAlert(gestureLabel: string, confidence: number, features: GestureFeatures) {
-  const location = await getCurrentLocationFast();
+  const locationContext = await getBestEffortLocation();
+  const location = {
+    latitude: locationContext.latitude,
+    longitude: locationContext.longitude,
+    accuracy: locationContext.accuracy,
+  };
   const triggeredAt = new Date().toISOString();
   const mapLink = buildMapLink(location.latitude, location.longitude);
   return createEmergencyAlertWithOptions(gestureLabel, confidence, features, {
     location,
     triggeredAt,
     mapLink,
+    metadata: {
+      location_source: locationContext.source,
+      location_available: locationContext.source !== "unavailable",
+    },
   });
 }
 
@@ -134,7 +104,12 @@ async function createEmergencyAlertWithOptions(
   features: GestureFeatures,
   options: CreateAlertOptions = {}
 ) {
-  const location = options.location || (await getCurrentLocationFast());
+  const locationContext = await getBestEffortLocation();
+  const location = options.location || {
+    latitude: locationContext.latitude,
+    longitude: locationContext.longitude,
+    accuracy: locationContext.accuracy,
+  };
   const triggeredAt = options.triggeredAt || new Date().toISOString();
   const mapLink = options.mapLink || buildMapLink(location.latitude, location.longitude);
 
@@ -143,7 +118,11 @@ async function createEmergencyAlertWithOptions(
     confidence,
     location,
     features,
-    metadata: options.metadata || {},
+    metadata: {
+      location_source: locationContext.source,
+      location_available: locationContext.source !== "unavailable",
+      ...(options.metadata || {}),
+    },
     triggered_at: triggeredAt,
   };
 
@@ -190,7 +169,20 @@ async function createEmergencyAlertWithOptions(
     data.triggered_at || triggeredAt,
     data?.trusted_circle_room?.public_link
   );
-  const smsLaunch = options.skipSmsDraft || !ENABLE_SMS_DRAFT_OPEN
+  let shouldOpenDraft = ENABLE_SMS_DRAFT_OPEN && !options.skipSmsDraft;
+  try {
+    const status = await api.get("/system/status");
+    const backendConfigured = Boolean(status.data?.sms_backend_configured);
+    const deliveryResults = (data?.delivery_results || []) as Array<{ status?: string }>;
+    const backendDelivered = deliveryResults.some((item) => item.status === "sent");
+    if (backendConfigured && backendDelivered) {
+      shouldOpenDraft = false;
+    }
+  } catch {
+    // if status check fails, keep best-effort fallback enabled
+  }
+
+  const smsLaunch = !shouldOpenDraft
     ? { opened: false, reason: "SMS composer disabled. Backend handles SMS delivery." }
     : await openSmsDraft(recipients, smsBody);
 

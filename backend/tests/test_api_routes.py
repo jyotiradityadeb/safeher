@@ -46,6 +46,7 @@ def test_signup_route_creates_user(monkeypatch):
     payload = response.json()
     assert payload["user"]["email"] == "alice@example.com"
     assert payload["access_token"]
+    assert payload["refresh_token"]
 
 
 def test_login_route_returns_token_for_existing_user(monkeypatch):
@@ -77,6 +78,7 @@ def test_login_route_returns_token_for_existing_user(monkeypatch):
     payload = response.json()
     assert payload["user"]["id"] == "user-1"
     assert payload["access_token"]
+    assert payload["refresh_token"]
     assert payload["user"]["is_admin"] is True
 
 
@@ -174,6 +176,11 @@ def test_alert_route_creates_alert_history_entry(monkeypatch):
     assert history_response.status_code == 200
     assert len(history_response.json()) == 1
 
+    alert_id = payload["id"]
+    resolve_response = client.patch(f"/api/alerts/{alert_id}/resolve")
+    assert resolve_response.status_code == 200
+    assert resolve_response.json()["status"] == "resolved"
+
 
 def test_federated_routes_submit_and_aggregate():
     db = FakeDatabase()
@@ -182,7 +189,7 @@ def test_federated_routes_submit_and_aggregate():
     submitted = client.post(
         "/api/federated/updates",
         json={
-            "user_id": "user-1",
+            "user_id": "admin-1",
             "round_id": 2,
             "sample_count": 4,
             "metrics": {"accuracy": 0.9},

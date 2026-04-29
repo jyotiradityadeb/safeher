@@ -19,6 +19,10 @@ type AuthContextValue = {
   logout: () => Promise<void>;
 };
 
+const ACCESS_TOKEN_KEY = "safeher_token";
+const REFRESH_TOKEN_KEY = "safeher_refresh_token";
+const USER_KEY = "safeher_user";
+
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 export function AuthProvider({ children }: React.PropsWithChildren) {
@@ -26,41 +30,68 @@ export function AuthProvider({ children }: React.PropsWithChildren) {
   const [user, setUser] = useState<User>();
   const [loading, setLoading] = useState(true);
 
+  const clearSession = async () => {
+    setToken(undefined);
+    setUser(undefined);
+    setAccessToken(undefined);
+    await SecureStore.deleteItemAsync(ACCESS_TOKEN_KEY);
+    await SecureStore.deleteItemAsync(REFRESH_TOKEN_KEY);
+    await SecureStore.deleteItemAsync(USER_KEY);
+  };
+
+  const persistSession = async (nextToken: string, nextUser: User, nextRefreshToken?: string) => {
+    setToken(nextToken);
+    setUser(nextUser);
+    setAccessToken(nextToken);
+    await SecureStore.setItemAsync(ACCESS_TOKEN_KEY, nextToken);
+    await SecureStore.setItemAsync(USER_KEY, JSON.stringify(nextUser));
+    if (nextRefreshToken) {
+      await SecureStore.setItemAsync(REFRESH_TOKEN_KEY, nextRefreshToken);
+    }
+  };
+
   useEffect(() => {
     const bootstrap = async () => {
-      const savedToken = await SecureStore.getItemAsync("safeher_token");
-      const savedUser = await SecureStore.getItemAsync("safeher_user");
-      if (savedToken) {
-        setAccessToken(savedToken);
-        try {
-          const { data } = await api.get("/me");
-          setToken(savedToken);
-          setUser(data);
-          await SecureStore.setItemAsync("safeher_user", JSON.stringify(data));
-        } catch {
-          setAccessToken(undefined);
-          await SecureStore.deleteItemAsync("safeher_token");
-          await SecureStore.deleteItemAsync("safeher_user");
+      const savedToken = await SecureStore.getItemAsync(ACCESS_TOKEN_KEY);
+      const savedUser = await SecureStore.getItemAsync(USER_KEY);
+      const savedRefreshToken = await SecureStore.getItemAsync(REFRESH_TOKEN_KEY);
+
+      if (!savedToken) {
+        if (savedUser) {
+          setUser(JSON.parse(savedUser));
         }
-      } else if (savedUser) {
-        setUser(JSON.parse(savedUser));
+        setLoading(false);
+        return;
+      }
+
+      setAccessToken(savedToken);
+      try {
+        const { data } = await api.get("/me");
+        await persistSession(savedToken, data);
+      } catch {
+        if (savedRefreshToken) {
+          try {
+            const refreshed = await api.post("/auth/refresh", { refresh_token: savedRefreshToken });
+            await persistSession(
+              refreshed.data.access_token,
+              refreshed.data.user,
+              refreshed.data.refresh_token
+            );
+          } catch {
+            await clearSession();
+          }
+        } else {
+          await clearSession();
+        }
       }
       setLoading(false);
     };
     bootstrap();
   }, []);
 
-  const persistSession = async (nextToken: string, nextUser: User) => {
-    setToken(nextToken);
-    setUser(nextUser);
-    setAccessToken(nextToken);
-    await SecureStore.setItemAsync("safeher_token", nextToken);
-    await SecureStore.setItemAsync("safeher_user", JSON.stringify(nextUser));
-  };
-
   const login = async (email: string, password: string) => {
     const { data } = await api.post("/auth/login", { email, password });
-    await persistSession(data.access_token, data.user);
+    await persistSession(data.access_token, data.user, data.refresh_token);
   };
 
   const signup = async (fullName: string, email: string, password: string, phoneNumber: string) => {
@@ -70,15 +101,11 @@ export function AuthProvider({ children }: React.PropsWithChildren) {
       password,
       phone_number: phoneNumber,
     });
-    await persistSession(data.access_token, data.user);
+    await persistSession(data.access_token, data.user, data.refresh_token);
   };
 
   const logout = async () => {
-    setToken(undefined);
-    setUser(undefined);
-    setAccessToken(undefined);
-    await SecureStore.deleteItemAsync("safeher_token");
-    await SecureStore.deleteItemAsync("safeher_user");
+    await clearSession();
   };
 
   const value = useMemo(

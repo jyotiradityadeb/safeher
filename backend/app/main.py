@@ -1,14 +1,18 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
+from time import perf_counter
 
 from fastapi import Depends, FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import router
 from app.core.config import get_settings
 from app.db.database import get_database
 from app.db.database import close_mongo_connection, connect_to_mongo
 from app.services.safety_service import SafetyService
+from app.utils.logging import configure_logging, log_event
 from app.utils.realtime import realtime_manager
 
 
@@ -20,6 +24,7 @@ async def lifespan(_: FastAPI):
 
 
 settings = get_settings()
+configure_logging()
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
@@ -29,6 +34,37 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(router, prefix="/api")
+evidence_dir = Path(__file__).resolve().parents[1] / "data" / "evidence"
+evidence_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/evidence", StaticFiles(directory=evidence_dir), name="evidence")
+
+
+@app.middleware("http")
+async def request_logging_middleware(request, call_next):
+    started_at = perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception as error:
+        elapsed_ms = round((perf_counter() - started_at) * 1000, 2)
+        log_event(
+            "http.request.failed",
+            method=request.method,
+            path=request.url.path,
+            host=request.client.host if request.client else "unknown",
+            elapsed_ms=elapsed_ms,
+            error=str(error),
+        )
+        raise
+    elapsed_ms = round((perf_counter() - started_at) * 1000, 2)
+    log_event(
+        "http.request.completed",
+        method=request.method,
+        path=request.url.path,
+        status_code=response.status_code,
+        host=request.client.host if request.client else "unknown",
+        elapsed_ms=elapsed_ms,
+    )
+    return response
 
 
 @app.get("/")
@@ -91,6 +127,7 @@ async def public_live_room_page(access_token: str, db=Depends(get_database)):
       <input id="ack-name" class="input" maxlength="80" placeholder="Your name (e.g., Priya)" />
       <br />
       <button id="ack-btn" class="button" onclick="acknowledgeViewed()">I Viewed This Alert</button>
+      <button id="eta-btn" class="button" onclick="sendOnMyWay()">I'm On My Way</button>
       <div class="muted" id="ack-status"></div>
       <ul id="receipts"></ul>
     </div>
@@ -168,6 +205,35 @@ async def public_live_room_page(access_token: str, db=Depends(get_database)):
           status.textContent = "Could not save acknowledgement.";
         }} finally {{
           button.disabled = false;
+        }}
+      }}
+
+      async function sendOnMyWay() {{
+        const input = document.getElementById("ack-name");
+        const status = document.getElementById("ack-status");
+        const name = (input.value || "").trim();
+        if (!name) {{
+          status.textContent = "Enter your name first.";
+          return;
+        }}
+        status.textContent = "Updating timeline...";
+        try {{
+          const res = await fetch(`/api/public/live-room/${{token}}/note`, {{
+            method: "POST",
+            headers: {{ "Content-Type": "application/json" }},
+            body: JSON.stringify({{
+              contact_name: name,
+              message: "I am on my way.",
+            }}),
+          }});
+          if (!res.ok) {{
+            status.textContent = "Could not update timeline.";
+            return;
+          }}
+          status.textContent = `${{name}} marked on-the-way.`;
+          await refresh();
+        }} catch {{
+          status.textContent = "Could not update timeline.";
         }}
       }}
 

@@ -1,7 +1,9 @@
 from datetime import datetime, timezone
+from pathlib import Path
 from statistics import mean
 
 from bson import ObjectId
+from fastapi import UploadFile
 
 from app.core.config import get_settings
 from app.schemas.alert import AlertCreate
@@ -21,6 +23,7 @@ class AlertService:
         self.db = db
         self.notification_service = NotificationService()
         self.push_service = PushService()
+        self.evidence_dir = Path(__file__).resolve().parents[2] / "data" / "evidence"
 
     async def create_alert(self, user_id: str, payload: AlertCreate, public_base_url: str | None = None) -> dict:
         settings = get_settings()
@@ -90,6 +93,58 @@ class AlertService:
         alerts = await self.alerts.find({"user_id": user_id}).sort("created_at", -1).to_list(length=100)
         return [self._serialize(alert) for alert in alerts]
 
+    async def mark_alert_status(self, user_id: str, alert_id: str, status: str) -> dict:
+        if status not in {"resolved", "cancelled"}:
+            raise ValueError("Unsupported alert status.")
+        if not ObjectId.is_valid(alert_id):
+            raise ValueError("Alert not found.")
+        existing = await self.alerts.find_one({"_id": ObjectId(alert_id), "user_id": user_id})
+        if not existing:
+            raise ValueError("Alert not found.")
+
+        now = datetime.now(timezone.utc)
+        await self.alerts.update_one(
+            {"_id": ObjectId(alert_id)},
+            {"$set": {"status": status, "resolved_at": now}},
+        )
+        existing["status"] = status
+        existing["resolved_at"] = now
+        serialized = self._serialize(existing)
+        await realtime_manager.broadcast({"type": "alert.status_changed", "payload": serialized})
+        return serialized
+
+    async def attach_audio_evidence(self, user_id: str, alert_id: str, audio_file: UploadFile) -> dict:
+        if not ObjectId.is_valid(alert_id):
+            raise ValueError("Alert not found.")
+        alert = await self.alerts.find_one({"_id": ObjectId(alert_id), "user_id": user_id})
+        if not alert:
+            raise ValueError("Alert not found.")
+
+        suffix = Path(audio_file.filename or "alert-audio.m4a").suffix or ".m4a"
+        safe_suffix = suffix if len(suffix) <= 10 else ".m4a"
+        filename = f"{alert_id}-{int(datetime.now(timezone.utc).timestamp())}{safe_suffix}"
+        self.evidence_dir.mkdir(parents=True, exist_ok=True)
+        target = self.evidence_dir / filename
+        content = await audio_file.read()
+        target.write_bytes(content)
+        evidence_url = f"/evidence/{filename}"
+
+        await self.alerts.update_one(
+            {"_id": ObjectId(alert_id)},
+            {
+                "$set": {
+                    "audio_evidence": {
+                        "filename": filename,
+                        "content_type": audio_file.content_type,
+                        "size_bytes": len(content),
+                        "uploaded_at": datetime.now(timezone.utc),
+                        "url": evidence_url,
+                    }
+                }
+            },
+        )
+        return {"alert_id": alert_id, "audio_evidence_url": evidence_url}
+
     async def get_admin_summary(self) -> dict:
         alerts = await self.alerts.find({}).sort("created_at", -1).to_list(length=200)
         user_ids = list({alert["user_id"] for alert in alerts})
@@ -122,4 +177,5 @@ class AlertService:
             "delivery_results": alert.get("delivery_results", []),
             "push_results": alert.get("push_results", []),
             "metadata": alert.get("metadata"),
+            "audio_evidence": alert.get("audio_evidence"),
         }

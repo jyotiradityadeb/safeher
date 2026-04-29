@@ -169,6 +169,33 @@ class SafetyService:
             raise ValueError("Live room not found.")
         return refreshed
 
+    async def add_public_live_room_note(self, access_token: str, contact_name: str, message: str) -> dict:
+        room = await self.live_rooms.find_one({"room_access_token": access_token, "status": "active"})
+        if room is None:
+            raise ValueError("Live room not found.")
+        cleaned_name = contact_name.strip()
+        cleaned_message = message.strip()
+        if not cleaned_name or not cleaned_message:
+            raise ValueError("Contact name and message are required.")
+        now = _utc_now()
+        timeline = list(room.get("timeline", []))
+        timeline.append(
+            {
+                "type": "contact_note",
+                "message": f"{cleaned_name}: {cleaned_message}",
+                "created_at": now,
+                "contact_name": cleaned_name,
+            }
+        )
+        await self.live_rooms.update_one(
+            {"_id": room["_id"]},
+            {"$set": {"timeline": timeline, "updated_at": now}},
+        )
+        refreshed = await self.get_public_live_room(access_token)
+        if refreshed is None:
+            raise ValueError("Live room not found.")
+        return refreshed
+
     async def get_latest_live_room(self, user_id: str) -> dict | None:
         room = await self.live_rooms.find_one({"user_id": user_id}, sort=[("updated_at", -1)])
         return self._serialize_live_room(room) if room else None

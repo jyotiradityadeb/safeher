@@ -10,7 +10,9 @@ class FederatedService:
         self.updates = db["model_updates"]
         self.global_models = db["global_models"]
 
-    async def submit_update(self, payload: ModelUpdateCreate) -> dict:
+    async def submit_update(self, payload: ModelUpdateCreate, authenticated_user_id: str | None = None) -> dict:
+        if authenticated_user_id and payload.user_id != authenticated_user_id:
+            raise ValueError("Model update user_id does not match authenticated user.")
         document = payload.model_dump()
         result = await self.updates.insert_one(document)
         document["_id"] = str(result.inserted_id)
@@ -77,7 +79,8 @@ class FederatedService:
                 metrics={"accuracy": accuracy, "loss": loss, "privacy_mode": 1.0},
                 weights=adjusted_weights,
                 submitted_at=datetime.utcnow(),
-            )
+            ),
+            authenticated_user_id=user_id,
         )
         global_model = await self.aggregate_round(next_round)
         return {

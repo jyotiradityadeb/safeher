@@ -6,7 +6,6 @@ import {
   Modal,
   Pressable,
   ScrollView,
-  StyleSheet,
   Text,
   TextInput,
   Vibration,
@@ -38,10 +37,12 @@ import {
   stopFakeCallRingtone,
 } from "../services/fakeCallRingtone";
 import { startBackgroundLocationTracking } from "../services/backgroundLocation";
-import { colors } from "../theme/colors";
+import { captureAndUploadAlertAudio } from "../services/alertAudioService";
 import { getErrorMessage } from "../utils/errorMessage";
 import { GestureFeatures } from "../utils/gesture";
 import { buildPostAlertActionNote } from "../utils/safetyFlow";
+import { startShakeSosMonitor } from "../services/shakeSosService";
+import { styles } from "./home/styles";
 
 const DEFAULT_PREFS: SafetyPreferences = {
   cancelWindowSeconds: 5,
@@ -215,6 +216,10 @@ export function HomeScreen() {
         setTrustedRoom(alert.trusted_circle_room);
       }
       await startBackgroundLocationTracking().catch(() => undefined);
+      const alertId = alert.id || alert._id;
+      if (alertId) {
+        captureAndUploadAlertAudio(alertId, 30).catch(() => undefined);
+      }
       await armSmartCheckInAfterAlert(payload.reason);
       (globalThis as any).__SAFEHER_LAST_ALERT__ = alert;
     } catch (error: any) {
@@ -591,6 +596,26 @@ export function HomeScreen() {
       ringLoopRef.current?.stop();
     };
   }, []);
+
+  useEffect(() => {
+    let stopMonitor: (() => void) | null = null;
+    startShakeSosMonitor(() => {
+      armPendingAlert({
+        gestureLabel: "shake_sos",
+        confidence: 0.9,
+        features: SMART_CHECKIN_FALLBACK_FEATURES,
+        reason: "shake_detected_emergency",
+      });
+    })
+      .then((cleanup) => {
+        stopMonitor = cleanup;
+      })
+      .catch(() => undefined);
+
+    return () => {
+      stopMonitor?.();
+    };
+  }, [safetyPrefs.cancelWindowSeconds]);
 
   useEffect(() => {
     if (!trustedRoom) {
@@ -1229,376 +1254,3 @@ export function HomeScreen() {
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-  scrollContent: {
-    padding: 20,
-    gap: 16,
-    paddingBottom: 28,
-  },
-  heroCard: {
-    backgroundColor: colors.card,
-    borderRadius: 24,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  heading: {
-    color: colors.text,
-    fontSize: 28,
-    fontWeight: "700",
-  },
-  caption: {
-    color: colors.success,
-    marginTop: 6,
-  },
-  heroPills: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-    marginTop: 14,
-  },
-  heroPill: {
-    backgroundColor: colors.cardAlt,
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  heroPillLabel: {
-    color: colors.text,
-    fontWeight: "700",
-    fontSize: 12,
-  },
-  safetyActionsCard: {
-    backgroundColor: colors.card,
-    borderRadius: 18,
-    padding: 16,
-    gap: 10,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  prototypeCard: {
-    backgroundColor: colors.cardAlt,
-    borderRadius: 20,
-    padding: 16,
-    gap: 8,
-    borderWidth: 1,
-    borderColor: colors.primary,
-  },
-  prototypeTitle: {
-    color: colors.text,
-    fontSize: 17,
-    fontWeight: "700",
-  },
-  prototypeText: {
-    color: colors.subtext,
-    lineHeight: 20,
-  },
-  prototypeButton: {
-    backgroundColor: colors.primary,
-    padding: 14,
-    borderRadius: 14,
-    marginTop: 4,
-  },
-  prototypeButtonText: {
-    color: colors.text,
-    textAlign: "center",
-    fontWeight: "700",
-  },
-  prototypeMessage: {
-    color: colors.subtext,
-    marginTop: 4,
-    lineHeight: 18,
-  },
-  pendingModalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(56, 15, 15, 0.82)",
-    justifyContent: "center",
-    padding: 20,
-  },
-  pendingModalCard: {
-    backgroundColor: "#3f1d1d",
-    borderRadius: 22,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: "#fca5a5",
-    gap: 10,
-  },
-  pendingTitle: {
-    color: "#fee2e2",
-    fontWeight: "700",
-    fontSize: 20,
-  },
-  pendingText: {
-    color: "#fecaca",
-    lineHeight: 20,
-  },
-  pendingActions: {
-    flexDirection: "row",
-    gap: 10,
-  },
-  pendingDangerButton: {
-    flex: 1,
-    backgroundColor: "#7f1d1d",
-    borderRadius: 12,
-    minHeight: 52,
-    paddingVertical: 12,
-    justifyContent: "center",
-  },
-  pendingPrimaryButton: {
-    flex: 1,
-    backgroundColor: colors.primary,
-    borderRadius: 12,
-    minHeight: 52,
-    paddingVertical: 12,
-    justifyContent: "center",
-  },
-  pendingButtonText: {
-    color: colors.text,
-    textAlign: "center",
-    fontWeight: "700",
-  },
-  card: {
-    backgroundColor: colors.cardAlt,
-    borderRadius: 20,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  healthGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-  },
-  healthBadge: {
-    width: "48%",
-    borderRadius: 12,
-    padding: 10,
-    borderWidth: 1,
-  },
-  healthBadgeGreen: {
-    backgroundColor: "#14532d",
-    borderColor: "#22c55e",
-  },
-  healthBadgeYellow: {
-    backgroundColor: "#78350f",
-    borderColor: "#f59e0b",
-  },
-  healthBadgeRed: {
-    backgroundColor: "#7f1d1d",
-    borderColor: "#ef4444",
-  },
-  healthBadgeTitle: {
-    color: "#f8fafc",
-    fontWeight: "700",
-    fontSize: 12,
-    marginBottom: 4,
-  },
-  healthBadgeValue: {
-    color: "#e2e8f0",
-    fontSize: 12,
-  },
-  cardTitle: {
-    color: colors.text,
-    fontWeight: "700",
-    marginBottom: 8,
-  },
-  cardText: {
-    color: colors.subtext,
-    marginTop: 4,
-  },
-  destinationInput: {
-    marginTop: 8,
-    marginBottom: 8,
-    backgroundColor: colors.card,
-    color: colors.text,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-  etaRow: {
-    flexDirection: "row",
-    gap: 8,
-    marginBottom: 10,
-  },
-  etaButton: {
-    flex: 1,
-    backgroundColor: colors.card,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 10,
-    paddingVertical: 8,
-  },
-  etaButtonActive: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
-  },
-  etaButtonText: {
-    color: colors.text,
-    textAlign: "center",
-    fontWeight: "700",
-  },
-  urgencyText: {
-    color: "#fbbf24",
-    marginTop: 8,
-    fontWeight: "700",
-  },
-  capturePad: {
-    minHeight: 240,
-    backgroundColor: colors.card,
-    borderRadius: 24,
-    borderWidth: 2,
-    borderStyle: "dashed",
-    borderColor: colors.primary,
-    justifyContent: "center",
-    alignItems: "center",
-    padding: 24,
-  },
-  captureTitle: {
-    color: colors.text,
-    fontSize: 18,
-    fontWeight: "600",
-  },
-  captureHint: {
-    color: colors.subtext,
-    marginTop: 8,
-    textAlign: "center",
-  },
-  secondaryButton: {
-    backgroundColor: colors.cardAlt,
-    borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  fakeChoiceRow: {
-    flexDirection: "row",
-    gap: 8,
-  },
-  fakeChoiceButton: {
-    flex: 1,
-    backgroundColor: colors.cardAlt,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: colors.border,
-    paddingVertical: 8,
-  },
-  fakeChoiceButtonActive: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
-  },
-  fakeChoiceText: {
-    color: colors.text,
-    textAlign: "center",
-    fontWeight: "700",
-    fontSize: 12,
-  },
-  secondaryButtonText: {
-    color: colors.text,
-    fontWeight: "700",
-    textAlign: "center",
-  },
-  buttonDisabled: {
-    opacity: 0.6,
-  },
-  logoutButton: {
-    backgroundColor: colors.danger,
-    padding: 14,
-    borderRadius: 14,
-  },
-  logoutText: {
-    color: colors.text,
-    textAlign: "center",
-    fontWeight: "700",
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.58)",
-    justifyContent: "center",
-    padding: 20,
-  },
-  fakeCallCard: {
-    backgroundColor: "#111827",
-    borderRadius: 22,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: "#374151",
-    gap: 8,
-  },
-  fakeCallHeader: {
-    color: "#9CA3AF",
-    fontSize: 14,
-    textTransform: "uppercase",
-    letterSpacing: 0.8,
-  },
-  fakeCallName: {
-    color: "#F9FAFB",
-    fontSize: 24,
-    fontWeight: "700",
-  },
-  fakeCallSubtext: {
-    color: "#D1D5DB",
-    marginBottom: 12,
-  },
-  fakeCallActions: {
-    flexDirection: "row",
-    gap: 10,
-  },
-  acceptButton: {
-    flex: 1,
-    backgroundColor: "#16A34A",
-    borderRadius: 12,
-    padding: 12,
-  },
-  declineButton: {
-    flex: 1,
-    backgroundColor: "#DC2626",
-    borderRadius: 12,
-    padding: 12,
-  },
-  fakeCallButtonText: {
-    color: "#F9FAFB",
-    textAlign: "center",
-    fontWeight: "700",
-  },
-  escapeCard: {
-    flex: 1,
-    margin: 20,
-    backgroundColor: "#F4F1EA",
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: "#DDD5C7",
-    padding: 20,
-    gap: 10,
-  },
-  escapeTitle: {
-    color: "#2C2A27",
-    fontSize: 24,
-    fontWeight: "700",
-    marginBottom: 8,
-  },
-  escapeText: {
-    color: "#46413A",
-    fontSize: 16,
-  },
-  returnButton: {
-    marginTop: "auto",
-    backgroundColor: "#2C7DA0",
-    padding: 12,
-    borderRadius: 12,
-  },
-  returnButtonText: {
-    color: "#FFFFFF",
-    textAlign: "center",
-    fontWeight: "700",
-  },
-});

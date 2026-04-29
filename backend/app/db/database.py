@@ -84,6 +84,9 @@ class InMemoryCollection:
         query = query or {}
         return InMemoryCursor([document for document in self.documents if _matches(document, query)])
 
+    async def create_index(self, *args, **kwargs):
+        return "in-memory-index"
+
 
 class InMemoryDatabase(dict):
     def __getitem__(self, name):
@@ -150,7 +153,11 @@ database = Database()
 
 async def connect_to_mongo() -> None:
     settings = get_settings()
+    app_env = settings.app_env.lower()
+    is_dev_env = app_env in {"development", "dev", "prototype", "test"}
     if settings.prototype_memory_db:
+        if not is_dev_env:
+            raise RuntimeError("PROTOTYPE_MEMORY_DB can only be enabled in development-like environments.")
         database.client = None
         database.db = InMemoryDatabase()
         _seed_in_memory(database.db)
@@ -159,10 +166,17 @@ async def connect_to_mongo() -> None:
         database.client = AsyncIOMotorClient(settings.mongodb_url, serverSelectionTimeoutMS=2000)
         await database.client.admin.command("ping")
         database.db = database.client[settings.mongodb_db]
+        await _ensure_indexes(database.db)
     except Exception:
-        database.client = None
-        database.db = InMemoryDatabase()
-        _seed_in_memory(database.db)
+        if settings.allow_memory_fallback and is_dev_env:
+            database.client = None
+            database.db = InMemoryDatabase()
+            _seed_in_memory(database.db)
+            return
+        raise RuntimeError(
+            "MongoDB unavailable and memory fallback is disabled. "
+            "Fix MONGODB_URL or explicitly enable ALLOW_MEMORY_DB_FALLBACK in development."
+        )
 
 
 async def close_mongo_connection() -> None:
@@ -174,3 +188,10 @@ def get_database() -> AsyncIOMotorDatabase:
     if database.db is None:
         raise RuntimeError("Database connection has not been initialized.")
     return database.db
+
+
+async def _ensure_indexes(db: AsyncIOMotorDatabase) -> None:
+    await db["users"].create_index("email", unique=True)
+    await db["contacts"].create_index([("user_id", 1), ("created_at", -1)])
+    await db["alerts"].create_index([("user_id", 1), ("created_at", -1)])
+    await db["locations"].create_index([("user_id", 1), ("recorded_at", -1)])

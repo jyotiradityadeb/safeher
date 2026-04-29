@@ -22,6 +22,7 @@ async def test_signup_creates_user_and_token(monkeypatch):
     )
 
     assert response.access_token
+    assert response.refresh_token
     assert response.user["email"] == "alice@example.com"
     assert len(db["users"].documents) == 1
 
@@ -45,3 +46,4 @@ async def test_login_returns_existing_user(monkeypatch):
 
     assert response.user["id"] == "user-1"
     assert response.access_token
+    assert response.refresh_token

@@ -18,6 +18,9 @@ async def get_current_user(
     try:
         payload = jwt.decode(credentials.credentials, settings.secret_key, algorithms=[ALGORITHM])
         user_id = payload.get("sub")
+        token_type = payload.get("token_type", "access")
+        if token_type != "access":
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token type.")
         if not user_id:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token.")
         user = await db["users"].find_one({"_id": ObjectId(user_id)})

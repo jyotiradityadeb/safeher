@@ -18,8 +18,32 @@ def get_password_hash(password: str) -> str:
     return pwd_context.hash(password)
 
 
+def _build_token(subject: str, expires_delta: timedelta, token_type: str) -> str:
+    settings = get_settings()
+    now = datetime.now(timezone.utc)
+    expire = now + expires_delta
+    payload: Dict[str, Any] = {
+        "sub": subject,
+        "exp": expire,
+        "iat": now,
+        "token_type": token_type,
+    }
+    return jwt.encode(payload, settings.secret_key, algorithm=ALGORITHM)
+
+
 def create_access_token(subject: str) -> str:
     settings = get_settings()
-    expire = datetime.now(timezone.utc) + timedelta(minutes=settings.access_token_expire_minutes)
-    payload: Dict[str, Any] = {"sub": subject, "exp": expire}
-    return jwt.encode(payload, settings.secret_key, algorithm=ALGORITHM)
+    return _build_token(
+        subject=subject,
+        expires_delta=timedelta(minutes=settings.access_token_expire_minutes),
+        token_type="access",
+    )
+
+
+def create_refresh_token(subject: str) -> str:
+    settings = get_settings()
+    return _build_token(
+        subject=subject,
+        expires_delta=timedelta(days=settings.refresh_token_expire_days),
+        token_type="refresh",
+    )

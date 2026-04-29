@@ -28,12 +28,17 @@ class NotificationService:
     async def dispatch_alert(self, contacts: list[dict], alert: dict, user: dict | None = None) -> list[dict]:
         results: list[dict] = []
         for contact in contacts:
-            channel = "sms"
+            channel = (contact.get("channel") or "sms").lower()
             destination = contact.get("phone_number")
             body = self._build_message(alert, user)
             if self.enabled and self.client:
                 sender = self.settings.twilio_phone_number
                 target = destination
+                if channel == "whatsapp":
+                    sender = self.settings.twilio_whatsapp_number or self.settings.twilio_phone_number
+                    target = f"whatsapp:{destination}"
+                    if not str(sender).startswith("whatsapp:"):
+                        sender = f"whatsapp:{sender}"
                 try:
                     message = self.client.messages.create(body=body, from_=sender, to=target)
                     results.append(
@@ -53,6 +58,10 @@ class NotificationService:
                             "error": str(exc),
                         }
                     )
+                    if channel == "sms":
+                        whatsapp_fallback = await self._send_whatsapp_fallback(destination, body, contact)
+                        if whatsapp_fallback:
+                            results.append(whatsapp_fallback)
             else:
                 results.append(
                     {
@@ -64,6 +73,29 @@ class NotificationService:
                     }
                 )
         return results
+
+    async def _send_whatsapp_fallback(self, destination: str, body: str, contact: dict) -> dict | None:
+        if not self.enabled or not self.client or not self.settings.twilio_whatsapp_number:
+            return None
+        sender = self.settings.twilio_whatsapp_number
+        if not sender.startswith("whatsapp:"):
+            sender = f"whatsapp:{sender}"
+        target = f"whatsapp:{destination}"
+        try:
+            message = self.client.messages.create(body=body, from_=sender, to=target)
+            return {
+                "contact": contact.get("name"),
+                "channel": "whatsapp_fallback",
+                "status": "sent",
+                "provider_sid": message.sid,
+            }
+        except Exception as exc:
+            return {
+                "contact": contact.get("name"),
+                "channel": "whatsapp_fallback",
+                "status": "failed",
+                "error": str(exc),
+            }
 
     def _build_message(self, alert: dict, user: dict | None) -> str:
         user_label = user["full_name"] if user else alert["user_id"]

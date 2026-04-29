@@ -12,6 +12,11 @@ class LiveRoomAckCreate(BaseModel):
     contact_name: str = Field(min_length=2, max_length=80)
 
 
+class PublicLiveRoomNoteCreate(BaseModel):
+    contact_name: str = Field(min_length=2, max_length=80)
+    message: str = Field(min_length=2, max_length=280)
+
+
 class CheckInRequestCreate(BaseModel):
     reason: str = Field(default="routine_safety_prompt", min_length=3, max_length=80)
     due_in_seconds: int = Field(default=120, ge=30, le=900)
