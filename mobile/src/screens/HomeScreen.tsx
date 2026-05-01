@@ -43,6 +43,7 @@ import { GestureFeatures } from "../utils/gesture";
 import { buildPostAlertActionNote } from "../utils/safetyFlow";
 import { startShakeSosMonitor } from "../services/shakeSosService";
 import { styles } from "./home/styles";
+import { colors } from "../theme/colors";
 
 const DEFAULT_PREFS: SafetyPreferences = {
   cancelWindowSeconds: 5,
